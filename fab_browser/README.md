@@ -1,15 +1,19 @@
-# Fab Browser v2026
+# Fab Browser v2026.2
 
-Fab Browser opens the actual Fab website in a regular Chrome window. Fab handles its own login, images, filters, listing pages, library, and downloads using the Chrome profile already configured on the computer.
+Fab Browser is based on [blender-webview](https://github.com/nawat-john/blender-webview). It displays the real Fab website in an interactive WebView2 overlay aligned over Blender's 3D viewport, with a small browser navigation bar.
 
-## Install
+## Requirements
 
-In Blender, open **Edit → Preferences → Add-ons → Install from Disk**, choose `fab_browser_v2026.zip`, enable **Fab Browser**, then open **3D View → Sidebar (N) → Fab**.
+- Windows 10/11
+- Blender 5.0 or newer
+- Microsoft Edge WebView2 Runtime
+- `pywebview` and `pythonnet` installed into Blender's Python (use the panel button once)
 
-## Use
+## Install and use
 
-1. Enter an optional search term and click **Browse Fab in Chrome**.
-2. Browse Fab and sign in normally in Chrome if needed. Download a 3D model in FBX, GLB, glTF, OBJ, or ZIP format.
-3. Return to Blender and click **Import Newest Fab Download**. The add-on imports the newest supported file from the Downloads folder shown in its panel. Change that folder if Chrome saves elsewhere.
+1. Install `fab_browser_v2026_webview.zip` from **Edit → Preferences → Add-ons → Install from Disk**, then enable Fab Browser.
+2. Open **3D View → Sidebar (N) → Fab**. Click **Install WebView2 Dependencies** once if shown.
+3. Click **Browse Fab**. Fab appears over the 3D viewport; use the web toolbar to browse, sign in, and download an asset.
+4. Return to Blender and click **Import Newest Download**. The add-on looks in the Downloads folder shown in the panel and imports FBX, GLB, glTF, or OBJ, including those inside a ZIP.
 
-Blender does not include an embedded Chromium engine for add-ons, so the actual site runs in Chrome rather than being drawn inside Blender. This gives Fab's normal website features and account session without copying browser credentials into the add-on. The import button handles downloaded model files; materials and other non-model assets may need their own import workflow.
+The browser is a separate WebView2 window positioned over the viewport, because Blender add-on panels cannot render HTML themselves. The window is interactive and uses Fab's regular website for images, login, and browsing. WebView2 uses its own browser profile; sign in to Fab in the overlay once if needed.

@@ -1,0 +1,18 @@
+schema_version = "1.0.0"
+
+id = "fab_browser"
+version = "2026.2.0"
+name = "Fab Browser"
+tagline = "Browse Fab inside the Blender viewport and import downloads"
+maintainer = "Fab to Blender community"
+type = "add-on"
+
+blender_version_min = "5.0.0"
+
+license = ["SPDX:MIT"]
+
+platforms = ["windows-x64"]
+
+# pywebview + pythonnet are installed into Blender's Python at runtime via the
+# panel's "Install Webview Dependencies" button rather than wheel-bundled, since
+# they pull in the system WebView2 runtime.
