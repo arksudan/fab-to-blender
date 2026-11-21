@@ -301,7 +301,8 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.fab_browser = bpy.props.PointerProperty(type=FABBROWSER_PG_settings)
     _previews = bpy.utils.previews.new()
-    _cache_dir = os.path.join(bpy.utils.user_resource('CACHE'), "fab_browser")
+    _cache_dir = os.path.join(bpy.utils.user_resource('DATAFILES'), "fab_browser", "cache")
+    os.makedirs(_cache_dir, exist_ok=True)
     bpy.app.timers.register(_refresh_timer, first_interval=1.0)
 
 
