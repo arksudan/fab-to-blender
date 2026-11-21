@@ -1,3 +1,5 @@
+# Fab to Blender v2026
+
 ## Announcement:
 This fork updates the Quixel seller filter to Fab's current seller name ("Quixel Megascans"), invalidates old search caches, and fixes catalog requests by letting Python negotiate response compression. Catalog browsing uses Fab's public endpoints and does not read browser cookies. The upstream project is archived, so Fab may change its undocumented API again.
 
