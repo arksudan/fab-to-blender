@@ -16,7 +16,7 @@ bl_info = {
     "name": "Fab to Blender",
     "description": "Browse and import free quixel assets from fab.com",
     "author": "https://github.com/cgmaterial",
-    "version": (4, 1, 0),
+    "version": (4, 3, 1),
     "blender": (4, 4, 3),
     "location": "View3D > Sidebar > Quixel",
     "category": "Asset Management",
@@ -48,6 +48,7 @@ loading_thread = None
 cursors = {"curr_cursor": "0", "next_cursor": "0"}
 preview_collection = None
 cancel_loading = False
+asset_loading_error = ""
 
 
 def get_asset_paths(context):
@@ -221,8 +222,8 @@ def setup_env(context, reset=False):
         print(f"Creating virtual environment at {paths['env_dir']}")
         subprocess.check_call([system_python, "-m", "venv", paths["env_dir"]])
         subprocess.check_call([paths["python_path"], "-m", "pip", "install", "--upgrade", "pip"])
-        subprocess.check_call(
-            [paths["python_path"], "-m", "pip", "install", "requests", "cloudscraper", "zstandard", "pillow", "pycookiecheat"])
+        packages = ["requests", "cloudscraper", "zstandard", "pillow"]
+        subprocess.check_call([paths["python_path"], "-m", "pip", "install", *packages])
 
 
 def add_asset_library(assets_dir):
@@ -378,7 +379,9 @@ def filter_downloaded_assets(context, assets, asset_type, import_size):
 
 
 def update_assets(context, cursor):
-    global loading_thread
+    global loading_thread, asset_loading_error, cancel_loading
+    asset_loading_error = ""
+    cancel_loading = False
     paths = get_asset_paths(context)
     if not is_valid_python_path(context.preferences.addons[__name__].preferences.system_python):
         print("Cannot update assets: Invalid or unset Python path.")
@@ -386,7 +389,9 @@ def update_assets(context, cursor):
     asset_type = str(context.scene.asset_type).strip()
     query = context.scene.asset_search.strip()
     sort_method = context.scene.sort_method
-    file_path = os.path.join(paths["json_dir"], f"search_{asset_type}_{query}_{sort_method}_{cursor}.json")
+    # Version the cache key so empty results cached with the old seller name
+    # are not reused after switching to Fab's current Quixel seller name.
+    file_path = os.path.join(paths["json_dir"], f"search_v3_{asset_type}_{query}_{sort_method}_{cursor}.json")
 
     if os.path.exists(file_path):
         time_difference = datetime.now() - datetime.fromtimestamp(os.path.getmtime(file_path))
@@ -394,12 +399,22 @@ def update_assets(context, cursor):
 
     if not os.path.exists(file_path) or time_difference > timedelta(hours=5):
         url = "https://www.fab.com/i/listings/search"
-        referer = "https://www.fab.com/sellers/Quixel"
+        referer = "https://www.fab.com/search?seller=Quixel+Megascans"
         command = [paths["python_path"], utils_path, "--function", "fetch_assets", url, referer, paths["json_dir"],
                    asset_type, query, cursor, sort_method]
         print(f"Running {command} inside the virtual environment...")
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        print(process.communicate()[0])
+        try:
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            stdout, stderr = process.communicate()
+            if process.returncode != 0 or not os.path.exists(file_path):
+                detail = (stderr or stdout or "Fab returned no search results file.").strip()
+                raise RuntimeError(detail.splitlines()[-1][:180])
+        except Exception as exc:
+            asset_loading_error = str(exc)[:180]
+            FILEBROWSER_PT_assets.assets = {}
+            bpy.app.timers.register(force_ui_refresh, first_interval=0.1)
+            print(f"Fab asset search failed: {exc}")
+            return
 
     loading_thread = threading.Thread(target=load_assets_in_background, args=(file_path, asset_type, context))
     loading_thread.start()
@@ -771,7 +786,9 @@ class FILEBROWSER_PT_assets(bpy.types.Panel):
             row.prop(context.scene, "asset_search", text="", icon='VIEWZOOM')
             row.prop(context.scene, "sort_method", text="")
             # row.operator("filebrowser.search_assets", text="", icon='VIEWZOOM')
-            if self.assets:
+            if asset_loading_error:
+                layout.label(text=asset_loading_error[:90], icon='ERROR')
+            elif self.assets:
                 if cancel_loading:
                     print("Loading cancelled.")
                     layout.label(text="Loading Cancelled.")
@@ -880,7 +897,7 @@ class IMPORT_ASSET_OT_import_asset(bpy.types.Operator):
 
         if not os.path.exists(asset_formats_file):
             url = f"https://www.fab.com/i/listings/{self.uid}/asset-formats"
-            referer = "https://www.fab.com/sellers/Quixel"
+            referer = "https://www.fab.com/search?seller=Quixel+Megascans"
             command = [paths["python_path"], utils_path, "--function", "fetch_asset_formats", url, referer,
                        paths["json_dir"], self.uid]
             print(f"Running {command} inside the virtual environment...")

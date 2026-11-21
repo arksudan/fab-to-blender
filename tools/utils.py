@@ -5,54 +5,22 @@ import sys
 import time
 from PIL import Image
 import cloudscraper
-import platform
-
-# Set user agent depending on OS
-if platform.system() == 'Windows':
-    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
-else:
-    user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
+import requests
 
 headers = {
     "Accept": "application/json, text/plain, */*",
-    "Accept-Encoding": "gzip, deflate, br, zstd",
-    "Accept-Language": "en",
-    "Alt-Used": "www.fab.com",
-    "Connection": "keep-alive",
-    "Dnt": "1",
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "same-origin",
-    "Sec-GPC": "1",
-    "User-Agent": user_agent,
+    # Let requests negotiate compression. Explicitly advertising zstd caused
+    # undecodable responses in some Blender Python environments.
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/132 Safari/537.36",
     "X-Requested-With": "XMLHttpRequest",
-    # Adding Client Hints
-    "Sec-CH-UA": '"Chromium";v="132", "Not A(Brand";v="99", "Google Chrome";v="132"',
-    "Sec-CH-UA-Mobile": "?0",
-    "Sec-CH-UA-Platform": "Windows"
 }
 
 querystring = {
     "is_free": "1",
-    "seller": "Quixel",
+    # Fab renamed the seller from "Quixel" to "Quixel Megascans".
+    "seller": "Quixel Megascans",
     "sort_by": "-firstPublishedAt"  # Default sort
 }
-
-
-def get_cookies():
-    try:
-        from pycookiecheat import firefox_cookies, chrome_cookies
-        all_cookies = chrome_cookies("fab.com")
-        if not all_cookies:
-            all_cookies = firefox_cookies("fab.com")
-        if all_cookies:
-            session_id = all_cookies.get("fab_sessionid", "")
-            csrftoken = all_cookies.get("fab_csrftoken", "")
-            cookies = {'fab_sessionid': session_id, 'fab_csrftoken': csrftoken}
-            return cookies
-    except:
-        print(str(sys.exc_info()))
-    return {}
 
 
 def crop_thumbnails(image_path):
@@ -141,7 +109,7 @@ def fetch_assets(url, referer, data_dir, asset_type=None, query=None, cursor=Non
     }
     querystring["sort_by"] = sort_mapping.get(sort_method, '-firstPublishedAt')
 
-    file_path = os.path.join(data_dir, f"search_{asset_type}_{query}_{sort_method}_{cursor}.json")
+    file_path = os.path.join(data_dir, f"search_v3_{asset_type}_{query}_{sort_method}_{cursor}.json")
 
     fetcher(url, headers, file_path, query=querystring)
 
@@ -163,18 +131,11 @@ def fetch_down_link(url, referer, data_dir, asset_uid=None):
 def fetcher(url, header, file_path, query=None):
     max_retries = 5  # Number of retries
     retry_delay = 2  # Delay in seconds between retries
-    # Create the cloudscraper instance
-    scraper = cloudscraper.create_scraper(browser={'custom': headers["User-Agent"]})
-    cookies = get_cookies()
-    print(cookies)
-
     for attempt in range(1, max_retries + 1):
         try:
-            # Make the GET request
-            if query:
-                response = scraper.get(url, headers=headers, params=query, cookies=cookies)
-            else:
-                response = scraper.get(url, headers=headers, cookies=cookies)
+            # Fab's public catalog endpoints do not need a browser login.
+            # Use the standard client to avoid the former zstd decoding issue.
+            response = requests.get(url, headers=header, params=query, timeout=30)
 
             if response.status_code == 200:
                 # Success: Process the response
@@ -188,9 +149,11 @@ def fetcher(url, header, file_path, query=None):
                     print(f"Data saved to {file_path}")
                     return  # Exit the function on success
 
-                except ValueError:
-                    print("Decoded content is not in valid JSON format.")
-                    return  # Exit the function if content is invalid
+                except ValueError as exc:
+                    if "cloudflare" in response.text.lower() or "<html" in response.text[:500].lower():
+                        raise RuntimeError(
+                            "Fab returned a browser challenge. Retry later or check your network connection.") from exc
+                    raise RuntimeError("Fab returned a response that is not JSON.") from exc
 
             elif response.status_code == 403:
                 # Forbidden: Log and retry
@@ -200,24 +163,14 @@ def fetcher(url, header, file_path, query=None):
 
             else:
                 # Other HTTP errors
-                print(f"Attempt {attempt}: Received HTTP {response.status_code}. Exiting.")
-                return
-
-        except cloudscraper.exceptions.CloudflareChallengeError as e:
-            print(f"Attempt {attempt}: Cloudflare challenge failed: {e}. Retrying in {retry_delay} seconds...")
-            time.sleep(retry_delay)
-            continue
-
-        except cloudscraper.exceptions.CloudflareCaptchaError as e:
-            print(f"Attempt {attempt}: Cloudflare CAPTCHA required: {e}. Unable to proceed.")
-            return
+                raise RuntimeError(f"Fab returned HTTP {response.status_code}.")
 
         except Exception as e:
             print(f"Attempt {attempt}: Request failed with exception: {e}. Retrying in {retry_delay} seconds...")
             time.sleep(retry_delay)
             continue
 
-    print("All retry attempts failed. Exiting.")
+    raise RuntimeError("Fab request failed after all retry attempts.")
 
 
 def download_file(url, out_file):

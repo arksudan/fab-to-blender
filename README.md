@@ -1,7 +1,5 @@
 ## Announcement:
-This addon no longer works. fab/epic changed their api and i could not get this addon to work properly anymore.
-I am archiving this repo. If anyone who knows their way around these things is interested, they can fork and work on this addon.
-Thank you everyone for your support.
+This fork updates the Quixel seller filter to Fab's current seller name ("Quixel Megascans"), invalidates old search caches, and fixes catalog requests by letting Python negotiate response compression. Catalog browsing uses Fab's public endpoints and does not read browser cookies. The upstream project is archived, so Fab may change its undocumented API again.
 
 ### Disclaimer:
 
