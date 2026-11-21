@@ -23,7 +23,8 @@ class VIEW3D_PT_webview(Panel):
         # Active mode is the interactive in-Blender browser overlay.
         row = layout.row(align=True)
         row.prop_enum(s, "mode", "OFF", text="Hide")
-        row.prop_enum(s, "mode", "ACTIVE", text="Browse Fab")
+        row.prop_enum(s, "mode", "ACTIVE", text="Browse")
+        row.prop_enum(s, "mode", "BACKGROUND", text="Use Blender")
 
         # Background-only controls.
         col = layout.column()
@@ -32,6 +33,10 @@ class VIEW3D_PT_webview(Panel):
         col.prop(s, "background_interact")
 
         layout.separator()
+        if s.mode == "ACTIVE":
+            layout.label(text="Click a Fab field to type; use Use Blender to return shortcuts.", icon="INFO")
+        elif s.mode == "BACKGROUND":
+            layout.label(text="Keyboard and mouse control Blender; browser is click-through.", icon="INFO")
         layout.label(text="Download a model in Fab, then:")
         layout.operator("fab_browser.import_latest", icon="IMPORT", text="Import Newest Download")
         layout.prop(s, "downloads_folder", text="Downloads")

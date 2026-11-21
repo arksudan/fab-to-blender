@@ -54,9 +54,9 @@ class WebviewSettings(PropertyGroup):
         items=(
             ("OFF", "Off", "Hide the webview"),
             ("ACTIVE", "Active",
-             "Interactive, always-on-top, draggable window"),
+             "Interactive Fab browser. Click the page to type into it."),
             ("BACKGROUND", "Background",
-             "Transparent, click-through overlay tracking the 3D viewport"),
+             "Visible click-through page. Keyboard and mouse go to Blender."),
         ),
         default="OFF",
         update=_on_mode,
@@ -65,7 +65,7 @@ class WebviewSettings(PropertyGroup):
     opacity: FloatProperty(
         name="Opacity",
         description="Webview opacity in background mode",
-        default=0.35,
+        default=1.0,
         min=0.05,
         max=1.0,
         subtype="FACTOR",

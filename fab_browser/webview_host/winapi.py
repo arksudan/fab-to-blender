@@ -59,7 +59,8 @@ def activate(hwnd):
     """Bring to foreground and give keyboard focus (needed for typing)."""
     user32.SetForegroundWindow(hwnd)
     user32.SetActiveWindow(hwnd)
-    user32.SetFocus(hwnd)
+    # Keyboard focus belongs to WebView2's Chromium child, not its outer frame.
+    user32.SetFocus(find_web_content_hwnd(hwnd))
 
 
 def set_topmost(hwnd, on):
