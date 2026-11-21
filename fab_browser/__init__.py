@@ -1,244 +1,140 @@
-"""Fab Browser: a standalone Fab marketplace browser for Blender."""
+"""Fab Browser: open the real Fab site and import its downloaded 3D assets."""
 
 bl_info = {
     "name": "Fab Browser",
     "author": "Fab to Blender community",
-    "version": (2026, 1, 0),
+    "version": (2026, 2, 0),
     "blender": (4, 4, 0),
     "location": "3D View > Sidebar > Fab",
-    "description": "Browse the public Fab catalog and add supported 3D assets to a scene",
+    "description": "Browse Fab in Chrome and import downloaded assets into Blender",
     "category": "3D View",
 }
 
 import bpy
-import bpy.utils.previews
-import json
 import os
-import threading
+import subprocess
 import urllib.parse
-import urllib.request
 import webbrowser
 import zipfile
-import tempfile
-import shutil
-from bpy.props import StringProperty, EnumProperty, IntProperty
-
-API = "https://www.fab.com/i"
-_state = {"items": [], "next": None, "loading": False, "error": "", "thumbs": 0, "lock": threading.Lock()}
-_previews = None
-_cache_dir = ""
+from bpy.props import StringProperty
 
 
-def _get_json(url):
-    request = urllib.request.Request(url, headers={
-        "Accept": "application/json", "User-Agent": "Mozilla/5.0 FabBrowser/2026",
-        "Referer": "https://www.fab.com/",
-    })
-    with urllib.request.urlopen(request, timeout=25) as response:
-        return json.loads(response.read().decode("utf-8"))
+def _chrome_executable():
+    candidates = [
+        os.path.join(os.environ.get("PROGRAMFILES", "C:/Program Files"), "Google/Chrome/Application/chrome.exe"),
+        os.path.join(os.environ.get("PROGRAMFILES(X86)", "C:/Program Files (x86)"), "Google/Chrome/Application/chrome.exe"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google/Chrome/Application/chrome.exe"),
+    ]
+    return next((path for path in candidates if path and os.path.isfile(path)), None)
 
 
-def _image_url(item):
-    for thumb in item.get("thumbnails", []):
-        images = thumb.get("images", [])
-        if images:
-            return min(images, key=lambda img: abs(int(img.get("height", 240)) - 240)).get("url", "")
-    return ""
+def _fab_search_url(query):
+    if query.strip():
+        return "https://www.fab.com/search?" + urllib.parse.urlencode({"q": query.strip()})
+    return "https://www.fab.com/"
 
 
-def _download_thumbnails(rows):
-    folder = _cache_dir
-    for item in rows:
-        url = item.get("image", "")
-        if not url:
-            continue
-        path = os.path.join(folder, item["uid"] + ".jpg")
-        try:
-            if not os.path.exists(path):
-                request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(request, timeout=15) as response, open(path, "wb") as out:
-                    shutil.copyfileobj(response, out)
-            item["image_path"] = path
-        except Exception:
-            item["image_path"] = ""
-        with _state["lock"]:
-            _state["thumbs"] -= 1
-
-
-def _redraw():
-    for window in bpy.context.window_manager.windows:
-        for area in window.screen.areas:
-            if area.type == 'VIEW_3D':
-                area.tag_redraw()
-    return None
-
-
-def _refresh_timer():
-    if _state["thumbs"]:
-        _redraw()
-        return 0.5
-    return 1.0
-
-
-def _search_worker(query, kind, sort, cursor):
-    try:
-        params = {"currency": "USD", "count": "30", "sort_by": sort}
-        if query.strip():
-            params["q"] = query.strip()
-        if kind != "all":
-            params["listing_types"] = kind
-        if cursor:
-            params["cursor"] = cursor
-        data = _get_json(API + "/listings/search?" + urllib.parse.urlencode(params))
-        rows = []
-        for entry in data.get("results", []):
-            type_value = entry.get("listingType") or entry.get("listing_type") or entry.get("type") or {}
-            if isinstance(type_value, dict):
-                type_value = type_value.get("code") or type_value.get("name") or ""
-            rows.append({
-                "uid": entry.get("uid", ""),
-                "title": entry.get("title", "Untitled asset"),
-                "seller": (entry.get("seller") or {}).get("name", "Fab seller"),
-                "kind": str(type_value),
-                "price": entry.get("price", {}).get("price", ""),
-                "url": "https://www.fab.com/listings/" + entry.get("uid", ""),
-                "image": _image_url(entry),
-            })
-        with _state["lock"]:
-            if not cursor:
-                _state["items"] = rows
-            else:
-                _state["items"].extend(rows)
-            _state["next"] = (data.get("cursors") or {}).get("next")
-            _state["error"] = ""
-        with _state["lock"]:
-            _state["thumbs"] += len(rows)
-        threading.Thread(target=_download_thumbnails, args=(rows,), daemon=True).start()
-    except Exception as exc:
-        with _state["lock"]:
-            _state["error"] = str(exc)[:220]
-    finally:
-        _state["loading"] = False
-
-
-def _start_search(context, more=False):
-    if _state["loading"]:
-        return
-    _state["loading"] = True
-    _state["error"] = ""
-    props = context.scene.fab_browser
-    cursor = _state["next"] if more else None
-    threading.Thread(target=_search_worker,
-                     args=(props.query, props.kind, props.sort, cursor), daemon=True).start()
+def _open_fab(url):
+    """Open the actual site in Chrome, using its normal signed-in profile."""
+    chrome = _chrome_executable()
+    if chrome:
+        subprocess.Popen([chrome, "--new-window", url], close_fds=True)
+    else:
+        webbrowser.open(url, new=1)
 
 
 class FABBROWSER_PG_settings(bpy.types.PropertyGroup):
-    query: StringProperty(name="Search", default="")
-    kind: EnumProperty(name="Type", items=[
-        ("all", "All assets", "Search every Fab listing type"),
-        ("3d-model", "3D models", ""), ("material", "Materials", ""),
-        ("environment", "Environments", ""), ("hdri", "HDRIs", ""),
-        ("decal", "Decals", ""), ("audio", "Audio", ""),
-        ("2d-asset", "2D assets", ""), ("code-plugin", "Code/plugins", ""),
-    ], default="all")
-    sort: EnumProperty(name="Sort", items=[
-        ("-relevance", "Relevance", ""), ("-createdAt", "Newest", ""),
-        ("-price", "Price: high to low", ""), ("price", "Price: low to high", ""),
-    ], default="-relevance")
-    selected: IntProperty(default=-1)
+    query: StringProperty(name="Search Fab", default="")
+    downloads_folder: StringProperty(
+        name="Chrome Downloads", subtype='DIR_PATH',
+        default=os.path.join(os.path.expanduser("~"), "Downloads"),
+    )
 
 
-class FABBROWSER_OT_search(bpy.types.Operator):
-    bl_idname = "fab_browser.search"
-    bl_label = "Search Fab"
-    more: bpy.props.BoolProperty(default=False)
+class FABBROWSER_OT_open_store(bpy.types.Operator):
+    bl_idname = "fab_browser.open_store"
+    bl_label = "Browse Fab in Chrome"
+    bl_description = "Open the real Fab website in Chrome with your normal browser profile and login"
 
     def execute(self, context):
-        if not self.more:
-            _state["next"] = None
-        _start_search(context, self.more)
+        query = context.scene.fab_browser.query
+        _open_fab(_fab_search_url(query))
+        self.report({'INFO'}, "Fab opened in Chrome. Download an asset there, then import it here.")
         return {'FINISHED'}
 
 
-class FABBROWSER_OT_open(bpy.types.Operator):
-    bl_idname = "fab_browser.open_listing"
-    bl_label = "Open on Fab"
-    url: StringProperty()
+def _safe_extract(archive_path, target_dir):
+    os.makedirs(target_dir, exist_ok=True)
+    root = os.path.abspath(target_dir)
+    root_prefix = root + os.sep
+    with zipfile.ZipFile(archive_path) as archive:
+        for member in archive.infolist():
+            destination = os.path.abspath(os.path.join(root, member.filename))
+            if destination != root and not destination.startswith(root_prefix):
+                raise RuntimeError("The downloaded archive contains an unsafe path.")
+            archive.extract(member, root)
 
-    def execute(self, context):
-        webbrowser.open(self.url)
-        return {'FINISHED'}
 
-
-def _download_and_import(uid, title):
-    safe_name = "".join(c for c in title if c.isalnum() or c in " -_").strip() or uid
-    root = os.path.join(bpy.utils.user_resource('DATAFILES'), "fab_browser", uid)
-    os.makedirs(root, exist_ok=True)
-    formats = _get_json(API + "/listings/" + uid + "/asset-formats")
-    choices = {"fbx", "glb", "gltf", "obj"}
-    selected = None
-    for fmt in formats if isinstance(formats, list) else []:
-        code = ((fmt.get("assetFormatType") or {}).get("code") or "").lower()
-        if code in choices and fmt.get("files"):
-            selected = (code, fmt["files"][0])
-            break
-    if not selected:
-        raise RuntimeError("No FBX, GLB, glTF, or OBJ download is listed for this asset.")
-    code, file_info = selected
-    file_uid = file_info.get("uid")
-    filename = os.path.basename(file_info.get("name") or (uid + ".zip"))
-    target = os.path.join(root, filename)
-    info = _get_json(API + f"/listings/{uid}/asset-formats/{urllib.parse.quote(code)}/files/{file_uid}/download-info")
-    download_url = info["downloadInfo"][0]["downloadUrl"]
-    if not os.path.exists(target):
-        request = urllib.request.Request(download_url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(request, timeout=120) as response, open(target, "wb") as out:
-            shutil.copyfileobj(response, out)
-    paths = []
-    if zipfile.is_zipfile(target):
-        extract = os.path.join(root, "extracted")
-        os.makedirs(extract, exist_ok=True)
-        with zipfile.ZipFile(target) as archive:
-            base = os.path.abspath(extract) + os.sep
-            for member in archive.infolist():
-                destination = os.path.abspath(os.path.join(extract, member.filename))
-                if destination != os.path.abspath(extract) and not destination.startswith(base):
-                    raise RuntimeError("Archive contains an unsafe file path.")
-                archive.extract(member, extract)
-        paths = [os.path.join(dp, f) for dp, _, files in os.walk(extract) for f in files]
+def _import_model(path):
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".fbx":
+        bpy.ops.import_scene.fbx(filepath=path)
+    elif ext in {".glb", ".gltf"}:
+        bpy.ops.import_scene.gltf(filepath=path)
+    elif ext == ".obj":
+        if hasattr(bpy.ops.wm, "obj_import"):
+            bpy.ops.wm.obj_import(filepath=path)
+        else:
+            bpy.ops.import_scene.obj(filepath=path)
     else:
-        paths = [target]
-    imported = False
-    for path in paths:
-        ext = os.path.splitext(path)[1].lower()
-        if ext == ".fbx":
-            bpy.ops.import_scene.fbx(filepath=path); imported = True
-        elif ext in {".glb", ".gltf"}:
-            bpy.ops.import_scene.gltf(filepath=path); imported = True
-        elif ext == ".obj":
-            if hasattr(bpy.ops.wm, "obj_import"):
-                bpy.ops.wm.obj_import(filepath=path)
-            else:
-                bpy.ops.import_scene.obj(filepath=path)
-            imported = True
-        if imported:
-            break
-    if not imported:
-        raise RuntimeError("Downloaded files did not contain an importable FBX, GLB, glTF, or OBJ.")
+        raise RuntimeError("Choose a Fab FBX, GLB, glTF, OBJ, or ZIP download.")
 
 
-class FABBROWSER_OT_add(bpy.types.Operator):
-    bl_idname = "fab_browser.add_to_scene"
-    bl_label = "Download & Add to Scene"
-    uid: StringProperty()
-    title: StringProperty()
+class FABBROWSER_OT_import_latest(bpy.types.Operator):
+    bl_idname = "fab_browser.import_latest"
+    bl_label = "Import Newest Fab Download"
+    bl_description = "Import the most recently downloaded supported 3D asset from Chrome Downloads"
 
     def execute(self, context):
+        folder = bpy.path.abspath(context.scene.fab_browser.downloads_folder)
+        if not os.path.isdir(folder):
+            self.report({'ERROR'}, "Downloads folder does not exist. Set the folder below.")
+            return {'CANCELLED'}
+
+        supported = {".zip", ".fbx", ".glb", ".gltf", ".obj"}
+        candidates = []
+        for entry in os.scandir(folder):
+            if entry.is_file() and os.path.splitext(entry.name)[1].lower() in supported:
+                candidates.append((entry.stat().st_mtime, entry.path))
+        if not candidates:
+            self.report({'ERROR'}, "No FBX, GLB, glTF, OBJ, or ZIP found in the selected Downloads folder.")
+            return {'CANCELLED'}
+
+        _, newest = max(candidates)
         try:
-            _download_and_import(self.uid, self.title)
-            self.report({'INFO'}, "Asset added to the scene")
+            ext = os.path.splitext(newest)[1].lower()
+            if ext != ".zip":
+                _import_model(newest)
+            else:
+                import_root = os.path.join(
+                    bpy.utils.user_resource('DATAFILES'), "fab_browser", "downloads",
+                    os.path.splitext(os.path.basename(newest))[0],
+                )
+                _safe_extract(newest, import_root)
+                rank = {".fbx": 0, ".glb": 1, ".gltf": 2, ".obj": 3}
+                models = []
+                for directory, _, filenames in os.walk(import_root):
+                    for filename in filenames:
+                        file_path = os.path.join(directory, filename)
+                        file_ext = os.path.splitext(filename)[1].lower()
+                        if file_ext in rank:
+                            models.append((rank[file_ext], file_path))
+                if not models:
+                    raise RuntimeError("The newest ZIP has no FBX, GLB, glTF, or OBJ model.")
+                _import_model(min(models)[1])
+            self.report({'INFO'}, "Imported " + os.path.basename(newest))
         except Exception as exc:
-            self.report({'ERROR'}, str(exc)[:200])
+            self.report({'ERROR'}, str(exc)[:220])
             return {'CANCELLED'}
         return {'FINISHED'}
 
@@ -253,66 +149,31 @@ class FABBROWSER_PT_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         props = context.scene.fab_browser
-        row = layout.row(align=True)
-        row.prop(props, "query", text="", icon='VIEWZOOM')
-        row.operator("fab_browser.search", text="", icon='FILE_REFRESH')
-        row = layout.row(align=True)
-        row.prop(props, "kind", text="")
-        row.prop(props, "sort", text="")
-        if _state["loading"]:
-            layout.label(text="Loading Fab catalog…", icon='TIME')
-        if _state["error"]:
-            layout.label(text=_state["error"], icon='ERROR')
-        with _state["lock"]:
-            items = list(_state["items"])
-        if not items and not _state["loading"]:
-            layout.label(text="Search all Fab listings, then select an asset.")
-        for index, item in enumerate(items):
-            box = layout.box()
-            row = box.row(align=True)
-            if item.get("image_path") and _previews:
-                key = item["uid"]
-                if key not in _previews:
-                    try:
-                        _previews.load(key, item["image_path"], 'IMAGE')
-                    except Exception:
-                        pass
-                if key in _previews:
-                    row.template_icon(_previews[key].icon_id, scale=5)
-            col = row.column(align=True)
-            col.label(text=item["title"][:56])
-            col.label(text=(item["seller"] + " · " + item["kind"])[:56])
-            actions = col.row(align=True)
-            actions.operator("fab_browser.open_listing", text="View", icon='URL').url = item["url"]
-            add = actions.operator("fab_browser.add_to_scene", text="Add", icon='IMPORT')
-            add.uid, add.title = item["uid"], item["title"]
-        if _state["next"]:
-            op = layout.operator("fab_browser.search", text="Load more results", icon='TRIA_DOWN')
-            op.more = True
+        layout.label(text="Fab's full website opens in Chrome.", icon='INFO')
+        layout.label(text="Your Chrome login, images, filters, and product pages work there.")
+        layout.prop(props, "query", text="Search")
+        layout.operator("fab_browser.open_store", icon='URL', text="Browse Fab in Chrome")
+        layout.separator()
+        layout.label(text="After downloading a 3D asset on Fab:")
+        layout.operator("fab_browser.import_latest", icon='IMPORT', text="Import Newest Fab Download")
+        layout.prop(props, "downloads_folder", text="Downloads")
 
 
-_CLASSES = (FABBROWSER_PG_settings, FABBROWSER_OT_search, FABBROWSER_OT_open,
-            FABBROWSER_OT_add, FABBROWSER_PT_panel)
+_CLASSES = (
+    FABBROWSER_PG_settings,
+    FABBROWSER_OT_open_store,
+    FABBROWSER_OT_import_latest,
+    FABBROWSER_PT_panel,
+)
 
 
 def register():
-    global _previews, _cache_dir
     for cls in _CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.fab_browser = bpy.props.PointerProperty(type=FABBROWSER_PG_settings)
-    _previews = bpy.utils.previews.new()
-    _cache_dir = os.path.join(bpy.utils.user_resource('DATAFILES'), "fab_browser", "cache")
-    os.makedirs(_cache_dir, exist_ok=True)
-    bpy.app.timers.register(_refresh_timer, first_interval=1.0)
 
 
 def unregister():
-    global _previews
-    if _previews:
-        bpy.utils.previews.remove(_previews)
-        _previews = None
-    if bpy.app.timers.is_registered(_refresh_timer):
-        bpy.app.timers.unregister(_refresh_timer)
     del bpy.types.Scene.fab_browser
     for cls in reversed(_CLASSES):
         bpy.utils.unregister_class(cls)

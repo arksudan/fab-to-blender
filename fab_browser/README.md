@@ -1,16 +1,15 @@
 # Fab Browser v2026
 
-Standalone Blender add-on for searching Fab's public listing catalog from the 3D View sidebar.
+Fab Browser opens the actual Fab website in a regular Chrome window. Fab handles its own login, images, filters, listing pages, library, and downloads using the Chrome profile already configured on the computer.
 
 ## Install
 
 In Blender, open **Edit → Preferences → Add-ons → Install from Disk**, choose `fab_browser_v2026.zip`, enable **Fab Browser**, then open **3D View → Sidebar (N) → Fab**.
 
-## Browse and add
+## Use
 
-- Search the public Fab catalog across all listing types, or narrow results by type and sort order.
-- Load more results with Fab's cursor pagination.
-- Open any listing on Fab to inspect its full page, sign in, or acquire it.
-- **Add** downloads a listed FBX, GLB, glTF, or OBJ format and imports it into the current scene when Fab permits the download. It does not purchase assets; Fab may require the asset to be free or already owned.
+1. Enter an optional search term and click **Browse Fab in Chrome**.
+2. Browse Fab and sign in normally in Chrome if needed. Download a 3D model in FBX, GLB, glTF, OBJ, or ZIP format.
+3. Return to Blender and click **Import Newest Fab Download**. The add-on imports the newest supported file from the Downloads folder shown in its panel. Change that folder if Chrome saves elsewhere.
 
-The catalog endpoint is undocumented and can change. Blender's sidebar is a native interface, not an embedded Chromium browser; full listing details open on Fab in the system browser.
+Blender does not include an embedded Chromium engine for add-ons, so the actual site runs in Chrome rather than being drawn inside Blender. This gives Fab's normal website features and account session without copying browser credentials into the add-on. The import button handles downloaded model files; materials and other non-model assets may need their own import workflow.
